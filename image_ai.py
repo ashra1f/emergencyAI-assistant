@@ -1,4 +1,5 @@
 import tkinter as tk
+from tkinter import filedialog
 import cv2
 import base64
 from PIL import Image, ImageTk, ImageDraw
@@ -17,34 +18,32 @@ client = Mistral(api_key=api_key)
 # Class for recording and transcribing audio using Whisper
 class WhisperApp:
     def __init__(self, root):
-        self.root = root
         self.is_recording = False
         self.filename = "output.wav"
         self.recording_thread = None
+        self.root = root  # Store reference to the root window for after callbacks
         
-        # Create the "Start/Stop Recording" round button
-        self.record_button = self.create_round_button(root, "Start Recording", self.toggle_recording, button_color="red")
-        self.record_button.pack(pady=10)
+        # Create the "Start/Stop Recording" button
+        self.record_button = self.create_button(root, "Start Recording", self.toggle_recording, bg_color="#E74C3C")
 
-    # Create a round button using Canvas
-    def create_round_button(self, parent, text, command, button_color="red"):
-        button_frame = tk.Frame(parent, bg="white")
-        canvas = tk.Canvas(button_frame, width=100, height=100, highlightthickness=0, bg="white")
-        canvas.pack()
+    def create_button(self, parent, text, command, bg_color):
+        """Helper method to create styled buttons."""
+        return tk.Button(
+            parent,
+            text=text,
+            command=command,
+            width=15,
+            height=2,
+            bg=bg_color,
+            fg="white",
+            activebackground="#C0392B",
+            activeforeground="white",
+            font=("Helvetica", 10, "bold"),
+            relief="flat",
+            bd=2,
+            highlightthickness=0
+        )
 
-        # Create a circle (button shape)
-        circle = canvas.create_oval(10, 10, 90, 90, outline=button_color, fill=button_color)
-        
-        # Add button text inside the circle
-        button_text = canvas.create_text(50, 50, text=text, fill="white", font=('Helvetica', 9, 'bold'))
-        
-        # Bind the click event to the circle
-        canvas.tag_bind(circle, "<Button-1>", lambda event: command())
-        canvas.tag_bind(button_text, "<Button-1>", lambda event: command())
-
-        return button_frame
-
-    # Toggle the recording (start/stop with the same button)
     def toggle_recording(self):
         if self.is_recording:
             self.stop_recording()
@@ -53,8 +52,8 @@ class WhisperApp:
 
     def start_recording(self):
         self.is_recording = True
-        self.record_button.winfo_children()[0].itemconfig(2, text="Stop Recording")  # Update button text
-        
+        self.record_button.config(text="Stop Recording")
+
         # Start recording in a separate thread
         self.recording_thread = threading.Thread(target=self.record_audio)
         self.recording_thread.start()
@@ -62,8 +61,8 @@ class WhisperApp:
     def stop_recording(self):
         self.is_recording = False
         if self.recording_thread:
-            self.recording_thread.join()  # Ensure the recording thread finishes before proceeding
-        self.record_button.winfo_children()[0].itemconfig(2, text="Start Recording")  # Update button text
+            self.recording_thread.join()  # Ensure the recording thread finishes
+        self.record_button.config(text="Start Recording")
 
     def record_audio(self):
         chunk = 1024  # Record in chunks of 1024 samples
@@ -112,37 +111,54 @@ class WhisperApp:
         model = whisper.load_model("medium")
         result = model.transcribe(self.filename)
 
-        # Insert transcribed text into the input_text field
-        input_text.delete(1.0, tk.END)  # Clear existing text
-        input_text.insert(tk.END, result['text'])  # Insert transcribed text
+        # Update the text box with the transcribed text (thread-safe way)
+        self.root.after(0, lambda: input_text.delete(1.0, tk.END))  # Clear any existing text
+        self.root.after(0, lambda: input_text.insert(tk.END, result['text']))  # Insert the transcribed text
 
         os.remove(self.filename)  # Delete the audio file after transcription to save space
 
 # Function to display the webcam feed in the Tkinter window
 def open_camera():
-    global cap
+    global cap, camera_window, camera_label
+
+    # Create a new window for the camera
+    camera_window = tk.Toplevel()
+    camera_window.title("Camera Feed")
+    camera_window.geometry("800x600")  # Set a larger window size for better visibility
+    camera_window.configure(bg="#F7F7F7")
+
+    # Create the label to display the camera feed in the new window
+    camera_label = tk.Label(camera_window, bg="#333333", bd=5, relief="solid")
+    camera_label.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
+
+    # Initialize the camera
     cap = cv2.VideoCapture(0)
 
     if not cap.isOpened():
         add_message_to_chat("Error: Unable to access the webcam.")
         return
 
-    # Optimize the frame update interval for better performance
-    update_frame(60)  # Updating the frame every 60ms instead of 10ms
+    update_frame(60)  # Update the frame every 60ms
 
-# Function to update the webcam feed with a round button (white dot)
+    # Bind a click event on the camera feed to capture the image
+    camera_label.bind("<Button-1>", capture_image)
+
+# Function to update the camera feed in the new window
 def update_frame(interval):
     ret, frame = cap.read()
     if ret:
+        # Resize the frame for better visibility in the large window
+        frame = cv2.resize(frame, (800, 600))
+
         # Convert the OpenCV frame (BGR) to Tkinter image (RGB)
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(frame)
 
-        # Draw a white dot (simulating a round button) on the camera feed
+        # Draw a white dot (simulating a capture button) on the camera feed
         draw = ImageDraw.Draw(img)
-        button_position = (int(img.width/2) - 15, img.height - 50)  # White dot position
-        button_size = 30  # Size of the dot
-        draw.ellipse([button_position[0], button_position[1], button_position[0] + button_size, button_position[1] + button_size], fill="white")
+        dot_position = (int(img.width / 2) - 20, img.height - 60)  # White dot position
+        dot_size = 40  # Size of the dot
+        draw.ellipse([dot_position[0], dot_position[1], dot_position[0] + dot_size, dot_position[1] + dot_size], fill="white")
 
         imgtk = ImageTk.PhotoImage(image=img)
 
@@ -150,24 +166,24 @@ def update_frame(interval):
         camera_label.imgtk = imgtk
         camera_label.config(image=imgtk)
 
-    # Adjust frame update rate to reduce processing load
+    # Continue updating the camera feed
     camera_label.after(interval, lambda: update_frame(interval))
 
-# Function to capture an image from the webcam, wait 3 seconds, and close the camera
+# Function to capture an image from the webcam, and immediately close the camera
 def capture_image(event):
     ret, frame = cap.read()
     if ret:
         cv2.imwrite("captured_image.jpg", frame)
-        add_message_to_chat("Image captured and saved as 'captured_image.jpg'.")
+        add_message_to_chat("Image captured and saved as 'captured_image.jpg'.", "user")
         describe_image("captured_image.jpg")
 
-    # Wait 3 seconds before closing the camera feed
-    window.after(3000, close_camera)
+    close_camera()  # Close the camera window immediately after capturing the image
 
-# Function to close the camera after a delay
+# Function to close the camera and the window after capturing
 def close_camera():
     cap.release()  # Release the camera
     camera_label.config(image='')  # Clear the displayed image
+    camera_window.destroy()  # Close the camera window
     cv2.destroyAllWindows()  # Close all OpenCV windows
 
 # Function to describe an image using the multimodal model
@@ -193,7 +209,162 @@ def describe_image(image_path):
                     "content": [
                         {
                             "type": "text",
-                            "text": '''You are a first responder. Describe the symptoms of the person in the picture.'''
+                            "text": '''Project Context:*
+You are developing an AI assistant focused on first aid. This assistant must be capable of transforming image descriptions depicting emergency situations into relevant questions. These questions will then be submitted to another AI model specialized in emergency cases to get recommendations on the appropriate actions to take.
+
+*Prompt Objective:*
+Rephrase an image description related to first aid into a clear, actionable question, intended for use by another AI model specialized in emergency scenarios, to provide suitable instructions.
+
+*Instructions:*
+
+1. *Contextual Analysis:* Understand the emergency situation described in the image.
+2. *Rephrasing into a Question:* Transform the description into a clear, relevant, action-oriented question.
+3. *Relevance and Actionability:* Ensure that the question elicits specific and immediate recommendations in the context of first aid.
+4. *Inter-Model Interaction:* Generate a question that will be passed to another AI model specialized in emergencies to provide action steps.
+
+*Examples:*
+
+---
+
+Image Description: A man is lying on a stretcher in an emergency room with a knife lodged in his abdomen.
+
+Generated Question:
+What first aid actions should an AI assistant specialized in emergency care recommend for a man lying on a stretcher with a knife lodged in his abdomen in an emergency room?
+
+---
+
+Image Description: A woman is unconscious on the ground in a park after being hit by a bicycle.
+
+Generated Question:
+What first aid steps should an AI assistant specialized in emergencies recommend for handling an unconscious woman after a bicycle accident in a park?
+
+---
+
+Image Description: A child is choking on an apple lodged in their throat, surrounded by concerned witnesses.
+
+Generated Question:
+How should an AI assistant specialized in first aid guide witnesses to help a child choking on an apple?
+
+---
+
+Image Description: A person performing CPR on a colleague who suffered a cardiac arrest in an office setting.
+
+Generated Question:
+What CPR steps should an AI assistant specialized in emergency care recommend during a cardiac arrest in an office environment?
+
+---
+
+Image Description: An individual has sustained third-degree burns from a house fire, requiring urgent medical intervention.
+
+Generated Question:
+What first aid measures should an AI assistant specialized in emergencies recommend for treating third-degree burns caused by a house fire?
+
+---
+
+Image Description: A man has broken his leg after a fall while hiking in the mountains and is immobilized.
+
+Generated Question:
+What first aid actions should an AI assistant recommend for managing a broken leg after a fall during a mountain hike?
+
+---
+
+Image Description: A person is experiencing a severe allergic reaction after consuming peanuts, showing signs of anaphylactic shock in a classroom.
+
+Generated Question:
+What interventions should an AI assistant specialized in first aid recommend for treating anaphylactic shock caused by a peanut allergy in a classroom?
+
+---
+
+Image Description: A drowning victim is partially out of the water, awaiting help on the beach.
+
+Generated Question:
+What first aid actions should an AI assistant recommend to assist a partially drowned person while waiting for emergency services on the beach?
+
+---
+
+Image Description: A person is suffering from severe food poisoning, showing symptoms of vomiting and abdominal cramps in a restaurant.
+
+Generated Question:
+What first aid measures should an AI assistant recommend for managing severe food poisoning with vomiting and abdominal cramps?
+
+---
+
+Image Description: A cyclist is severely injured after a road accident, with multiple injuries requiring urgent medical evacuation.
+
+Generated Question:
+What are the priority actions an AI assistant should recommend for managing a severely injured cyclist after a road accident?
+
+---
+
+Image Description: A person is having a seizure in public, surrounded by confused bystanders.
+
+Generated Question:
+What first aid advice should an AI assistant provide for managing a seizure in public and assisting disoriented bystanders?
+
+---
+
+Image Description: A man is experiencing a heart attack in the middle of a busy street, with passersby attempting to assist.
+
+Generated Question:
+What immediate steps should an AI assistant recommend to assist a man having a heart attack in a busy street with helping passersby?
+
+---
+
+Image Description: A person has sustained a severe ankle sprain after slipping on ice, with witnesses trying to stabilize the injury.
+
+Generated Question:
+What first aid actions should an AI assistant recommend for managing a severe ankle sprain after a fall on ice, with witnesses trying to help?
+
+---
+
+Image Description: A baby is showing signs of choking during feeding, with panicked parents seeking help.
+
+Generated Question:
+How should an AI assistant guide parents to help a baby choking during feeding?
+
+---
+
+Image Description: A person is suffering from carbon monoxide poisoning in an apartment, showing symptoms of confusion and weakness.
+
+Generated Question:
+What first aid measures should an AI assistant recommend for treating carbon monoxide poisoning with symptoms of confusion and weakness in an apartment?
+
+---
+
+Image Description: An athlete collapses on the field after a cardiac episode, with teammates trying to assist.
+
+Generated Question:
+What first aid actions should an AI assistant recommend to assist an athlete after a cardiac event on the field, with teammates trying to help?
+
+---
+
+Image Description: A person hits their head against a wall due to a fall, showing signs of a concussion in a public space.
+
+Generated Question:
+What interventions should an AI assistant recommend for managing a concussion after a person hits their head in a public space?
+
+---
+
+Image Description: A person is bitten by a venomous snake in a rural area, showing signs of shock and intense pain.
+
+Generated Question:
+What priority actions should an AI assistant recommend for treating a venomous snake bite in a rural area with signs of shock and intense pain?
+
+---
+
+Image Description: A person is having a stroke, displaying signs of one-sided paralysis in a workplace.
+
+Generated Question:
+What first aid measures should an AI assistant recommend for managing a stroke with one-sided paralysis in a workplace?
+
+---
+
+*Prompt Usage Instructions:*
+
+1. *Replace the Description:* Insert the new image description where indicated.
+2. *Generate the Question:* Let the AI assistant generate the relevant question based on the provided examples.
+3. *Verify:* Ensure that the generated question is clear, relevant, action-oriented, and adheres to first aid protocols.
+'''
                         },
                         {
                             "type": "image_url",
@@ -205,17 +376,19 @@ def describe_image(image_path):
         )
 
         description = chat_response.choices[0].message.content
-        add_message_to_chat(f"Image description: {description}")
+        add_message_to_chat(f"AI Assistant: {description}", "ai")
 
     except Exception as e:
-        add_message_to_chat(f"Error: {str(e)}")
+        add_message_to_chat(f"Error: {str(e)}", "ai")
 
 # Function to send text input to the API
 def send_text():
     user_input = input_text.get("1.0", tk.END).strip()
     if not user_input:
-        add_message_to_chat("Error: No text entered.")
+        add_message_to_chat("Error: No text entered.", "user")
         return
+
+    add_message_to_chat(f"User: {user_input}", "user")
 
     try:
         # Send request to the model with the user input
@@ -230,15 +403,31 @@ def send_text():
         )
 
         response = chat_response.choices[0].message.content
-        add_message_to_chat(f"API response: {response}")
+        add_message_to_chat(f"QdAI: {response}", "ai")
 
     except Exception as e:
-        add_message_to_chat(f"Error: {str(e)}")
+        add_message_to_chat(f"Error: {str(e)}", "ai")
+
+    # Clear the input text box after sending the message
+    input_text.delete(1.0, tk.END)
+
+# Function to upload an image
+def upload_image():
+    file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg;*.jpeg;*.png")])
+    if file_path:
+        add_message_to_chat(f"Image uploaded: {file_path}", "user")
+        describe_image(file_path)
 
 # Function to add a message to the chat window
-def add_message_to_chat(message):
+def add_message_to_chat(message, sender):
     chat_text.config(state=tk.NORMAL)  # Unlock the chat text box for editing
-    chat_text.insert(tk.END, f"{message}\n")  # Append the new message
+    
+    # Apply formatting based on whether the sender is "user" or "ai"
+    if sender == "user":
+        chat_text.insert(tk.END, f"{message}\n", "user")  # Append the new message
+    elif sender == "ai":
+        chat_text.insert(tk.END, f"{message}\n", "ai")  # Append AI message in bold
+
     chat_text.config(state=tk.DISABLED)  # Lock the chat text box after editing
     chat_text.see(tk.END)  # Scroll to the bottom of the chat box
 
@@ -247,54 +436,45 @@ def create_gui():
     global window, camera_label, chat_text, input_text
 
     window = tk.Tk()
-    window.title("Medical Themed Application")
-    window.geometry("600x650")  # Adjusted window size for a more compact layout
-    window.configure(bg="white")  # Set white background for the Red Cross theme
+    window.title("QuickAid")
+    window.geometry("450x800")  # Adjusted window size for a mobile-like appearance
+    window.configure(bg="#F7F7F7")  # Set background to light gray
 
-    # Chat window
-    chat_text = tk.Text(window, height=10, width=60, bg="white", fg="black", wrap="word", bd=5, relief="solid")
-    chat_text.pack(pady=10)
+    # Chat window to display messages like a chatbot conversation
+    chat_text = tk.Text(window, height=20, width=50, bg="white", fg="black", wrap="word", bd=2, relief="solid", font=("Arial", 10))
+    chat_text.pack(pady=10, padx=10)
     chat_text.config(state=tk.DISABLED)  # Disable direct editing of the chat
 
-    # Camera feed display
-    camera_label = tk.Label(window, bg="black", bd=5, relief="solid")
-    camera_label.pack(pady=10)
+    # Configure tags for the chat text formatting
+    chat_text.tag_configure("user", foreground="gray")  # User messages in gray
+    chat_text.tag_configure("ai", font=("Arial", 10, "bold"))  # AI messages in bold
 
-    # Text input field
-    input_text = tk.Text(window, height=3, width=50, bg="white", fg="black", bd=5, relief="solid")
-    input_text.pack(pady=10)
+    # Text input field for typing messages
+    input_text = tk.Text(window, height=3, width=40, bg="#FFFFFF", fg="black", bd=2, relief="solid", font=("Arial", 10))
+    input_text.pack(pady=10, padx=10)
 
-    # Button to send the entered text
-    send_text_btn = create_round_button(window, "Send Text", send_text)
-    send_text_btn.pack(pady=5)
+    # Button frame (for horizontal button layout)
+    button_frame_top = tk.Frame(window, bg="#F7F7F7")
+    button_frame_top.pack(pady=10)
 
-    # Button to open the camera
-    open_camera_btn = create_round_button(window, "Open Camera", open_camera)
-    open_camera_btn.pack(pady=5)
+    # First row of buttons: Send Text and Start Recording
+    send_text_btn = WhisperApp(window).create_button(button_frame_top, "Send Text", send_text, bg_color="#3498DB")
+    send_text_btn.pack(side=tk.LEFT, padx=5)
 
-    # Bind a click event to capture an image inside the camera label
-    camera_label.bind("<Button-1>", capture_image)
+    whisper_app = WhisperApp(button_frame_top)
+    whisper_app.record_button.pack(side=tk.LEFT, padx=5)
 
-    # Integrate the WhisperApp into the main Tkinter interface
-    whisper_app = WhisperApp(window)
+    # Second row of buttons: Open Camera and Upload Image
+    button_frame_bottom = tk.Frame(window, bg="#F7F7F7")
+    button_frame_bottom.pack(pady=10)
+
+    open_camera_btn = WhisperApp(window).create_button(button_frame_bottom, "Open Camera", open_camera, bg_color="#2ECC71")
+    open_camera_btn.pack(side=tk.LEFT, padx=5)
+
+    upload_image_btn = WhisperApp(window).create_button(button_frame_bottom, "Upload Image", upload_image, bg_color="#F39C12")
+    upload_image_btn.pack(side=tk.LEFT, padx=5)
 
     window.mainloop()
-
-# Create a round button for use in the interface
-def create_round_button(parent, text, command):
-    button_frame = tk.Frame(parent, bg="white")
-    canvas = tk.Canvas(button_frame, width=100, height=100, highlightthickness=0, bg="white")
-    canvas.pack()
-
-    # Draw a circle (round button)
-    circle = canvas.create_oval(10, 10, 90, 90, outline="red", fill="red")
-    button_text = canvas.create_text(50, 50, text=text, fill="white", font=('Helvetica', 9, 'bold'))
-
-    # Bind click event to the circle and text
-    canvas.tag_bind(circle, "<Button-1>", lambda event: command())
-    canvas.tag_bind(button_text, "<Button-1>", lambda event: command())
-
-    return button_frame
 
 if __name__ == "__main__":
     create_gui()
